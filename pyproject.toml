@@ -8,10 +8,7 @@ version = "1.0.0"
 authors = [
   { name="Samuel Hangouët", email="samuel.hangouet@quarkslab.com" },
 ]
-description = """
-This library aims at building, displaying and vectorize the dataflow graph of a
-chunk of binary code (like a basic block), using Ghidra P-Code representation.
-"""
+description = "Build, display and vectorize semantic graphs from binary code"
 readme = "README.md"
 requires-python = ">= 3.12"
 dependencies = [
@@ -24,7 +21,18 @@ dependencies = [
 "magika"
 ]
 
-license = {text = "MIT License"}
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.urls]
+Homepage = "https://github.com/quarkslab/pcode_graph"
+Issues = "https://github.com/quarkslab/pcode_graph/issues"
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Security",
+]
 
 [project.optional-dependencies]
 torch = [

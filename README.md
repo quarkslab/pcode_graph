@@ -24,6 +24,9 @@ Or to display the graph of the whole content of an assembly file in HTML:
 ### Run tests
 
 ```console
+$ python3.14 -m venv venv
+$ source venv/bin/activate
+(venv) $ pip install .[test,torch]
 (venv) $ python -m pytest tests
 ```
 

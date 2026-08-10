@@ -24,15 +24,15 @@ dependencies = [
 license = "MIT"
 license-files = ["LICENSE"]
 
-[project.urls]
-Homepage = "https://github.com/quarkslab/pcode_graph"
-Issues = "https://github.com/quarkslab/pcode_graph/issues"
-
 classifiers = [
   "Programming Language :: Python :: 3",
   "Operating System :: OS Independent",
   "Topic :: Security",
 ]
+
+[project.urls]
+Homepage = "https://github.com/quarkslab/pcode_graph"
+Issues = "https://github.com/quarkslab/pcode_graph/issues"
 
 [project.optional-dependencies]
 torch = [

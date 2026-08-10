@@ -1,0 +1,6 @@
+/venv
+/.venv
+/lib
+/out
+__pycache__
+/.vscode

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pcode_graph"
+version = "1.0.0"
+authors = [
+  { name="Samuel Hangouët", email="samuel.hangouet@quarkslab.com" },
+]
+description = """
+This library aims at building, displaying and vectorize the dataflow graph of a
+chunk of binary code (like a basic block), using Ghidra P-Code representation.
+"""
+readme = "README.md"
+requires-python = ">= 3.12"
+dependencies = [
+"keystone-engine~=0.9.2",
+"loguru",
+"pypcode>=4.0.0",
+"pyvis",
+"lief~=1.0.0",
+"docopt",
+"magika"
+]
+
+license = {text = "MIT License"}
+
+[project.optional-dependencies]
+torch = [
+  "torch~=2.13.0",
+  "torch_geometric~=2.8.0",
+]
+test = ["pytest", "pytest-timeout"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pcode_graph"]
+
+[project.scripts]
+cdg = "pcode_graph.cli:main"

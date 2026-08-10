@@ -1,0 +1,12 @@
+# Requirements for dev env, tested versions are pinned into pyproject.toml.
+keystone-engine
+loguru
+pypcode
+lief
+docopt
+magika
+torch
+torch_geometric
+pytest
+pytest-timeout
+pyvis

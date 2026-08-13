@@ -31,7 +31,7 @@ class EdgeKinds(Enum):
     Control = 1
 
 
-@dataclass
+@dataclass(slots=True)
 class Edge:
     source_node: NodeIndex
 
@@ -44,7 +44,7 @@ class Edge:
     operand_number: OperandNumber | None
 
 
-@dataclass
+@dataclass(slots=True)
 class Node:
     # Kind of node
     kind: NodeKinds
@@ -99,7 +99,7 @@ class Node:
                 raise ValueError(self.kind)
 
 
-@dataclass
+@dataclass(slots=True)
 class EdgeProxy:
     """Easy access to edges for one node."""
 
@@ -150,7 +150,7 @@ class EdgeProxy:
         return [o[1] for o in operands]
 
 
-@dataclass
+@dataclass(slots=True)
 class CDG:
     """
     Graph of P-Code operations with Control and Data flow edges.

@@ -26,10 +26,18 @@ class MakerFlags:
     build_cfg: bool = True
     """Add control flow links in addition to the data flow. Defaults to True."""
 
-    ignore_reg_outputs: set[str] | None = None
+    reg_outputs_black_list: set[str] | None = None
     """Do not consider the given registers as graph outputs to simplify the graphs.
     Arch-dependent register names.
-    If None, the result of pcode.get_special_register_names() is used.
+    If white-list is not None, the value of black-list is ignored.
+    If both black-list and white-list are None, the content of SPECIAL_REGISTERS is used
+    for black-list.
+    """
+
+    reg_outputs_white_list: set[str] | None = None
+    """Consider only the given registers as graph outputs to simplify the graphs.
+    Arch-dependent register names.
+    If white-list is not None, the value of black-list is ignored.
     """
 
 
@@ -45,10 +53,11 @@ def make_graph(prg: RichPcodeList, flags: MakerFlags | None = None) -> CDG:
     """
 
     if flags is None:
-        flags = MakerFlags()
-    ignore_reg_outputs = flags.ignore_reg_outputs
-    if ignore_reg_outputs is None:
-        ignore_reg_outputs = SPECIAL_REGISTERS[prg.arch]
+        flags = MakerFlags()    
+
+    black_list, white_list = flags.reg_outputs_black_list, flags.reg_outputs_white_list
+    if black_list is None and white_list is None:
+        black_list = SPECIAL_REGISTERS[prg.arch]    
 
     # Already created input nodes, by related input variable
     input_node_indexes: dict[Var, NodeIndex] = {}
@@ -189,13 +198,22 @@ def make_graph(prg: RichPcodeList, flags: MakerFlags | None = None) -> CDG:
     for var, def_op_indexes in prg.get_exit_defs().items():
         assert def_op_indexes
         match var.kind:
-            case VarKinds.Register:
-                if var.pretty_name.lower().startswith("tmp"):
-                    # Ignore writes to temporaries
-                    continue
-                if var.pretty_name in ignore_reg_outputs:
-                    # Ignore writes to special registers
-                    continue
+            case VarKinds.Register:                
+                if white_list is not None:
+                    if var.pretty_name not in white_list:
+                        continue
+                else:
+                    assert black_list is not None
+                    if var.pretty_name.lower().startswith("tmp"):
+                        # Ignore writes to temporaries
+                        continue
+                    if var.pretty_name in black_list:
+                        # Ignore writes to special registers
+                        continue
+                    if var.pretty_name == "UNKNOWN":
+                        # Register name not provided in P-Code
+                        continue
+                assert var.pretty_name
                 output_node = Node(
                     NodeKinds.OutputRegister,
                     var.size,
@@ -309,8 +327,7 @@ def make_graph(prg: RichPcodeList, flags: MakerFlags | None = None) -> CDG:
 
     graph = CDG(nodes, edges)
 
-    # Uncomment to locate a graph structure bug
-    # Comment to speed up
+    # Uncomment to locate a bug: graph structure vs simplifier
     # check_graph(graph)
 
     GraphSimplifier(graph).process()

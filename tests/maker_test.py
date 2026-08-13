@@ -98,7 +98,7 @@ ret
 """,
         x86_64,
         outdir,
-        flags=MakerFlags(ignore_reg_outputs=special_regs),
+        flags=MakerFlags(reg_outputs_black_list=special_regs),
     )
 
     check_inputs(g, "#0x8", "RSP", "MEMORY")
@@ -131,7 +131,7 @@ ldp x29, x30, [sp], #0x10
 """,
         arm64,
         outdir,
-        flags=MakerFlags(ignore_reg_outputs=special_regs),
+        flags=MakerFlags(reg_outputs_black_list=special_regs),
     )
 
     load1, load2 = [n for n, node in enumerate(g.nodes) if node.opcode == OpCodes.LOAD]
@@ -569,7 +569,7 @@ call 0x546fb
         asm,
         x86_64,
         outdir / "full",
-        flags=MakerFlags(ignore_reg_outputs=ignored_regs),
+        flags=MakerFlags(reg_outputs_black_list=ignored_regs),
     )
     check_inputs(g2, "RSP", "#0x8", "#0x5")  # 0x5 is return address
     check_outputs(g2, "RSP", "MEMORY")

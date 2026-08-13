@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Iterator, override
 from pypcode import OpCode, PcodeOp, Varnode
 from pcode_graph.arch import Arch
-from pcode_graph.pcode import OpCodes, dump_operation, from_native_opcode
+from pcode_graph.pcode import dump_operation, from_native_opcode
 from pcode_graph.visitor import PcodeVisitor
 
 OpIndex = int
@@ -56,7 +56,8 @@ class Var:
 def wrap(var: Varnode) -> Var:
     match var.space.name:
         case "register":
-            return Var(VarKinds.Register, var.size, var.offset, var.getRegisterName())
+            name = var.getRegisterName() or "UNKNOWN"
+            return Var(VarKinds.Register, var.size, var.offset, name)
         case "unique":
             return Var(VarKinds.Unique, var.size, var.offset, f"${var.offset}")
         case "const":

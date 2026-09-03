@@ -105,7 +105,7 @@ class Node:
 class EdgeProxy:
     """Easy access to edges for one node."""
 
-    graph: CDG
+    graph: "CDG"
     in_edge_indexes: list[EdgeIndex]
     out_edge_indexes: list[EdgeIndex]
 

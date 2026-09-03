@@ -50,7 +50,6 @@ from pcode_graph.pcode import dump_operation
 from pcode_graph.analysis import RichPcodeList
 from pcode_graph.maker import MakerFlags, make_graph
 from pcode_graph.view import draw_graph
-from magika import Magika
 
 
 def main():
@@ -66,10 +65,8 @@ def main():
         input_path = Path(args["<input_path>"])
         assert input_path.exists()
 
-        binary: Binary | None = None
         assert input_path.stat().st_size > 0, "Input file is empty"
-        if not Magika().identify_path(input_path).output.is_text:
-            binary = parse_binary(input_path)
+        binary: Binary | None = parse_binary(input_path)
 
         if args["--arch"] != "auto":
             arch: Arch = Arch(args["--arch"])

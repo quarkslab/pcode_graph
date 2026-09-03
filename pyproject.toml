@@ -17,8 +17,7 @@ dependencies = [
 "pypcode>=4.0.0",
 "pyvis",
 "lief~=1.0.0",
-"docopt",
-"magika"
+"docopt"
 ]
 
 license = "MIT"

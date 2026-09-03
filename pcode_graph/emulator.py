@@ -69,7 +69,7 @@ class Emulator(PcodeVisitor):
                             OperandNumber | None, tuple[NodeIndex, Value]
                         ] = {}
 
-                        for in_edge in p.in_edges:
+                        for in_edge in p.get_in_edges():
                             if in_edge.kind != EdgeKinds.Data:
                                 continue
 
@@ -88,7 +88,8 @@ class Emulator(PcodeVisitor):
                             propagated = True
 
                     case NodeKinds.OutputRegister:
-                        (in_edge,) = p.get_inputs_edges()
+                        (in_edge_index,) = p.get_input_edges()
+                        in_edge = self.graph.edges[in_edge_index]
                         value = self.values.get(in_edge.source_node)
                         if value is not None:
                             self.values[index] = value

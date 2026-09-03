@@ -11,13 +11,27 @@ from pcode_graph.pcode import OpCodes
 from collections import deque
 from itertools import chain
 
-class Diameters(NamedTuple):
+
+class Stats(NamedTuple):
     data_only: int
     control_only: int
     both: int
 
 
-def get_graph_diameters(cdg: CDG) -> Diameters:
+def count_edges(cdg: CDG) -> Stats:
+
+    data_only: int = 0
+
+    for edge in cdg.edges:
+        if edge.kind == EdgeKinds.Data:
+            data_only += 1
+
+    return Stats(data_only, len(cdg.edges) - data_only, len(cdg.edges))
+
+
+def get_graph_diameters(cdg: CDG) -> Stats:
+    """Computes the diameter of the given graph."""
+
     n = len(cdg.nodes)
 
     def build_adjacency(edges):
@@ -47,17 +61,19 @@ def get_graph_diameters(cdg: CDG) -> Diameters:
                     if dist[neigbor] == -1:
                         dist[neigbor] = dist[current] + 1
                         front.append(neigbor)
-            d = max(d, max(dist))            
+            d = max(d, max(dist))
         return d
 
-    return Diameters(
+    return Stats(
         diameter(build_adjacency(data_edges)),
         diameter(build_adjacency(ctrl_edges)),
         diameter(build_adjacency(chain(data_edges, ctrl_edges))),
     )
 
+
 class FunctionCharacteristics(IntFlag):
-    """Helps evaluating the level of difficulty of this function."""
+    """Helps evaluating the level of difficulty of a function,
+    regarding miscalleneous ML tasks."""
 
     data = auto()
     condition = auto()
@@ -68,6 +84,7 @@ class FunctionCharacteristics(IntFlag):
 
 
 def get_function_characteristics(graph: CDG) -> FunctionCharacteristics:
+    """Characterizes a function regarding control flow features."""
 
     # Every function contains data-flow easiest level
     function_characteristics = FunctionCharacteristics.data

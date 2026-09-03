@@ -34,8 +34,8 @@ def check_graph(graph: CDG):
         )
 
         proxy = proxy_dict[index]
-        control_succs = proxy.get_control_successors()
-        data_preds = proxy.get_data_predecessors()
+        control_succs = list(proxy.get_control_successors())
+        data_preds = list(proxy.get_data_predecessors())
 
         if node.kind != NodeKinds.Operation:
             assert node.opcode is None
@@ -46,11 +46,11 @@ def check_graph(graph: CDG):
 
             data_numbers: list[int] = []
             control_numbers: list[int] = []
-            for edge in proxy.in_edges:
+            for edge in proxy.get_in_edges():
                 if edge.kind == EdgeKinds.Data:
                     assert edge.operand_number is not None
                     data_numbers.append(edge.operand_number)
-            for edge in proxy.out_edges:
+            for edge in proxy.get_out_edges():
                 if edge.kind == EdgeKinds.Control:
                     assert edge.operand_number is not None
                     control_numbers.append(edge.operand_number)

@@ -29,7 +29,7 @@ class FunctionOps(ChunkOps):
 
 
 def parse_binary(binary_path: Path) -> lief.Binary:
-    assert binary_path.exists(), f"{binary_path} not found"
+    assert binary_path.is_file(), f"{binary_path} is not a file"    
     logger.debug(f"Parse {binary_path}")
     b = lief.parse(binary_path.as_posix())
     assert isinstance(b, lief.Binary)

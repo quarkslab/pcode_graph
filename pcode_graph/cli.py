@@ -3,7 +3,7 @@
 Dumps Control and Data Graph (CDG) and various data from a binary or assembly file.
 
 Usage:
-    cdg ( asm | functions | html | md | pcode | table ) <input_path> [options]
+    cdg ( asm | functions | html | md | pcode | table | stats ) <input_path> [options]
 
 Dump commands:
     asm        Assembly dump
@@ -12,6 +12,7 @@ Dump commands:
     md         CDG in markdown/mermaid format
     pcode      P-Code operations
     table      Markdown table of the P-Code enriched by static analysis results
+    stats      Prints graph statistics
 
 Options:
     -f, --function <name>       Take only the function with given symbol name.
@@ -21,10 +22,11 @@ Options:
     -D, --dataflow-only         Only extract dataflow graph (and no control flow).
     -o, --output <path>         Where to write the output.
     -h, --help                  This help.
-    -d, --debug                 Debug mode: do no catch exceptions.    
+    -d, --debug                 Debug mode: do no catch exceptions.
 """
 
 from pathlib import Path
+import re
 import sys
 from docopt import docopt
 from lief import Binary
@@ -33,6 +35,7 @@ from loguru import logger
 import pypcode
 from pcode_graph.arch import Arch
 from pcode_graph.asm import Assembler
+from pcode_graph.charac import count_edges, get_graph_diameters
 from pcode_graph.lief_importer import (
     get_function,
     iter_code_sections,
@@ -104,6 +107,10 @@ def main():
                     code = function.content
                 else:
                     # Lift piece of code
+                    if not re.search("[a-fA-FxX]", chunk_begin_end):
+                        logger.warning(
+                            f"This does not look like hexadecimal addresses: {chunk_begin_end}"
+                        )
                     start_address, end_address = [
                         int(a, 16) for a in chunk_begin_end.split(":")
                     ]
@@ -164,6 +171,17 @@ def main():
             print(str(cdg), file=output)
             sys.exit(0)
 
+        if args["stats"]:
+            stats = dict(
+                diameter=get_graph_diameters(cdg)._asdict(),
+                edges=count_edges(cdg)._asdict(),
+                nodes=len(cdg.nodes),
+            )
+
+            print(repr(stats), file=output)
+            sys.exit(0)
+
+        assert args["html"], "Unknown command"
         assert output_path, "HTML output file is mandatory"
         output.close()
         draw_graph(cdg, Path(output_path))

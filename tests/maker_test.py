@@ -166,10 +166,10 @@ ldr x2, [sp, 0x10]
 
     (load_index,) = [n for n, node in enumerate(g.nodes) if node.opcode == OpCodes.LOAD]
     proxy = g.compute_edge_proxy()
-    phi_index, add_index = proxy[load_index].get_data_predecessors()
+    phi_index, add_index = list(proxy[load_index].get_data_predecessors())
     assert g.nodes[phi_index].kind == NodeKinds.Phi
     assert g.nodes[add_index].opcode == OpCodes.INT_ADD
-    assert len(proxy[phi_index].get_data_predecessors()) == 3
+    assert len(list(proxy[phi_index].get_data_predecessors())) == 3
 
 
 def test_call_ind_arm(outdir: Path, arm64: ArchContext, log):
@@ -199,7 +199,7 @@ mul x1, x0, x0
     else:
         assert False, "Call not found"
 
-    assert len(g.compute_edge_proxy()[call].get_control_successors()) == 2
+    assert len(list(g.compute_edge_proxy()[call].get_control_successors())) == 2
 
 
 def test_div(outdir: Path, x86_64: ArchContext, log):
@@ -240,7 +240,7 @@ mov x0, x6
 
     proxy = g.compute_edge_proxy()
 
-    assert proxy[x0_output].get_data_predecessors() == [x1_input]
+    assert list(proxy[x0_output].get_data_predecessors()) == [x1_input]
 
 
 def test_various_opcodes(outdir: Path, arm64: ArchContext, log):
@@ -409,14 +409,14 @@ ret
 
     proxy = g.compute_edge_proxy()
     (load,) = [i for i, n in enumerate(g.nodes) if n.opcode == OpCodes.LOAD]
-    assert len(proxy[load].get_control_predecessors()) == 2
+    assert len(list(proxy[load].get_control_predecessors())) == 2
 
     (rax,) = [
         i
         for i, n in enumerate(g.nodes)
         if n.kind == NodeKinds.OutputRegister and n.register_name == "RAX"
     ]
-    (rax_pred,) = proxy[rax].get_data_predecessors()
+    (rax_pred,) = list(proxy[rax].get_data_predecessors())
     assert g.nodes[rax_pred].kind == NodeKinds.Phi
 
 
@@ -450,7 +450,7 @@ jmp rax
 
     (end,) = [i for i, n in enumerate(g.nodes) if n.kind == NodeKinds.External]
     (branchind,) = [i for i, n in enumerate(g.nodes) if n.opcode == OpCodes.BRANCHIND]
-    assert g.compute_edge_proxy()[end].get_control_predecessors() == [branchind]
+    assert list(g.compute_edge_proxy()[end].get_control_predecessors()) == [branchind]
 
 
 def test_imul(outdir: Path, x86_64: ArchContext):
@@ -1131,7 +1131,7 @@ RET
 
     for n, node in enumerate(g.nodes):
         if node.kind == NodeKinds.Constant:
-            assert proxy[n].get_data_successors(), f"Orphan constant {node}"
+            assert list(proxy[n].get_data_successors()), f"Orphan constant {node}"
 
 
 def test_lea_simplification(outdir: Path, x86_64: ArchContext, log):

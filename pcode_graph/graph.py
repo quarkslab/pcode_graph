@@ -1,9 +1,11 @@
 from dataclasses import dataclass, replace
 from enum import Enum, auto
+from typing import Iterator
 from pcode_graph.pcode import OpCodes
 from pcode_graph.utils import unsigned_to_signed
 
 NodeIndex = int
+EdgeIndex = int
 OperandNumber = int
 RegisterId = int
 Value = int
@@ -103,39 +105,50 @@ class Node:
 class EdgeProxy:
     """Easy access to edges for one node."""
 
-    in_edges: list[Edge]
-    out_edges: list[Edge]
+    graph: CDG
+    in_edge_indexes: list[EdgeIndex]
+    out_edge_indexes: list[EdgeIndex]
 
-    def get_data_predecessors(self) -> list[NodeIndex]:
-        return [
-            edge.source_node for edge in self.in_edges if edge.kind == EdgeKinds.Data
-        ]
+    def get_in_edges(self) -> Iterator[Edge]:
+        for index in self.in_edge_indexes:
+            yield self.graph.edges[index]
 
-    def get_control_predecessors(self) -> list[NodeIndex]:
-        return [
-            edge.source_node for edge in self.in_edges if edge.kind == EdgeKinds.Control
-        ]
+    def get_out_edges(self) -> Iterator[Edge]:
+        for index in self.out_edge_indexes:
+            yield self.graph.edges[index]
 
-    def get_data_successors(self) -> list[NodeIndex]:
-        return [
-            edge.destination_node
-            for edge in self.out_edges
-            if edge.kind == EdgeKinds.Data
-        ]
+    def get_data_predecessors(self) -> Iterator[NodeIndex]:
+        for e in self.in_edge_indexes:
+            edge = self.graph.edges[e]
+            if edge.kind == EdgeKinds.Data:
+                yield edge.source_node
 
-    def get_control_successors(self) -> list[NodeIndex]:
-        return [
-            edge.destination_node
-            for edge in self.out_edges
-            if edge.kind == EdgeKinds.Control
-        ]
+    def get_control_predecessors(self) -> Iterator[NodeIndex]:
+        for e in self.in_edge_indexes:
+            edge = self.graph.edges[e]
+            if edge.kind == EdgeKinds.Control:
+                yield edge.source_node
 
-    def get_inputs_edges(self) -> list[Edge]:
+    def get_data_successors(self) -> Iterator[NodeIndex]:
+        for e in self.out_edge_indexes:
+            edge = self.graph.edges[e]
+            if edge.kind == EdgeKinds.Data:
+                yield edge.destination_node
+
+    def get_control_successors(self) -> Iterator[NodeIndex]:
+        for e in self.out_edge_indexes:
+            edge = self.graph.edges[e]
+            if edge.kind == EdgeKinds.Control:
+                yield edge.destination_node
+
+    def get_input_edges(self) -> list[EdgeIndex]:
         """Returns data input operands, by number."""
-        operands: list[tuple[OperandNumber | None, Edge]] = []
+
+        operands: list[tuple[OperandNumber | None, EdgeIndex]] = []
         hasNone = False
         hasNumber = False
-        for in_edge in self.in_edges:
+        for in_edge_index in self.in_edge_indexes:
+            in_edge = self.graph.edges[in_edge_index]
             if in_edge.kind == EdgeKinds.Control:
                 continue
             n = in_edge.operand_number
@@ -143,7 +156,7 @@ class EdgeProxy:
                 hasNone = True
             else:
                 hasNumber = True
-            operands.append((n, in_edge))
+            operands.append((n, in_edge_index))
         assert hasNone ^ hasNumber
         if hasNumber:
             operands.sort()
@@ -167,10 +180,10 @@ class CDG:
         return CDG([replace(n) for n in self.nodes], [replace(e) for e in self.edges])
 
     def compute_edge_proxy(self) -> dict[NodeIndex, EdgeProxy]:
-        cache = {index: EdgeProxy([], []) for index in range(len(self.nodes))}
-        for edge in self.edges:
-            cache[edge.source_node].out_edges.append(edge)
-            cache[edge.destination_node].in_edges.append(edge)
+        cache = {index: EdgeProxy(self, [], []) for index in range(len(self.nodes))}
+        for e, edge in enumerate(self.edges):
+            cache[edge.source_node].out_edge_indexes.append(e)
+            cache[edge.destination_node].in_edge_indexes.append(e)
         return cache
 
     def add_node(self, node: Node) -> NodeIndex:

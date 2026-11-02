@@ -1,3 +1,4 @@
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
@@ -72,23 +73,10 @@ def wrap(var: Varnode) -> Var:
 
 
 # Writing operations by variable byte (see split)
-Definitions = dict[Var, set[OpIndex]]
+Definitions = dict[Var, frozenset[OpIndex]]
 
-
-def apply_operation(
-    definitions: Definitions,
-    index: OpIndex,
-    op: PcodeOp,
-) -> Definitions:
-    """Returns the new definitions after the given operation is applied."""
-
-    if op.output:
-        result = dict(definitions)
-        written = {index}
-        for byte in split(wrap(op.output)):
-            result[byte] = written
-        return result
-    return definitions
+# Writing operations inside a block by variable byte, sorted by index
+LocalWriters = dict[Var, list[OpIndex]]
 
 
 def split(var: Var) -> tuple[Var, ...]:
@@ -156,11 +144,15 @@ class Program:
     basic_blocks: list[BasicBlock] = field(default_factory=list)
     block_indexes: list[BlockIndex] = field(default_factory=list)
 
-    # Reaching definitions. For each operation, by variable, list of:
-    #   - definitions (= writing operation index) that reach this operation,
+    # Reaching definitions at the entry of each block. By variable byte, set of:
+    #   - definitions (= writing operation index) that reach the block,
     #   - or EntryIndex (for initial definitions of inputs).
-    # Sets are shared between operations: do not modify them.
-    reaching_defs: list[Definitions] = field(default_factory=list)
+    # P-Code temporaries are only kept if read by another block.
+    # Definitions inside a block are derived on demand from block_writers,
+    # which avoids storing a full copy of the definitions for each operation.
+    # Both are empty for unreachable blocks.
+    block_inputs: list[Definitions] = field(default_factory=list)
+    block_writers: list[LocalWriters] = field(default_factory=list)
 
     # Memory analysis results
     memory: Memory = field(default_factory=Memory)
@@ -232,25 +224,43 @@ class Program:
     def get_defs(self, index: OpIndex, var: Var) -> set[OpIndex]:
         """Returns all the operations defining the value at given operation of the given variable."""
 
-        definitions = self.reaching_defs[index]
+        block_index = self.block_indexes[index]
+        inputs = self.block_inputs[block_index]
+        writers = self.block_writers[block_index]
         defs: set[OpIndex] = set()
         for byte in split(var):
-            defs |= definitions.get(byte, set())
+            byte_writers = writers.get(byte)
+            if byte_writers:
+                position = bisect_left(byte_writers, index)
+                if position:
+                    defs.add(byte_writers[position - 1])
+                    continue
+            defs.update(inputs.get(byte, ()))
         return defs
 
-    def get_exit_defs(self) -> Definitions:
+    def definitions_at(self, index: OpIndex) -> Definitions:
+        """Returns all the definitions reaching the given operation."""
+
+        return self._definitions_before(self.block_indexes[index], index)
+
+    def _definitions_before(self, block_index: BlockIndex, end: OpIndex) -> Definitions:
+        definitions = dict(self.block_inputs[block_index])
+        for byte, writers in self.block_writers[block_index].items():
+            position = bisect_left(writers, end)
+            if position:
+                definitions[byte] = frozenset((writers[position - 1],))
+        return definitions
+
+    def get_exit_defs(self) -> dict[Var, set[OpIndex]]:
         """Computes side effects of the program."""
 
-        exit_defs: Definitions = {}
-        for block in self.basic_blocks:
+        exit_defs: dict[Var, set[OpIndex]] = {}
+        for block_index, block in enumerate(self.basic_blocks):
             if not block.reachable or not {UnknownCodeIndex, ExitIndex}.intersection(
                 block.succ_blocks
             ):
                 continue
-            index = block.last_op_index
-            outputs = apply_operation(
-                self.reaching_defs[index], index, self.operations[index]
-            )
+            outputs = self._definitions_before(block_index, block.end)
             for byte, defs in outputs.items():
                 if byte.kind == VarKinds.Unique:
                     # Ignore P-Code temporary

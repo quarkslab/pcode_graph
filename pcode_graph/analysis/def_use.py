@@ -1,39 +1,60 @@
 import heapq
 
+from .interning import Interner
 from .pass_base import PassBase
 from .program import (
     BasicBlock,
-    BlockIndex,
     Definitions,
     EntryIndex,
+    LocalWriters,
+    OpIndex,
     Var,
     VarKinds,
     wrap,
     split,
-    apply_operation,
 )
 
 
 class ReachingDefBuilder(PassBase):
+    """Computes reaching definitions at the entry of each block.
+
+    Identical definition sets are shared (interned) to bound memory on large functions.
+    """
 
     def __call__(self):
-        self.program.reaching_defs = [{} for _ in self.program.operations]
-        if not self.program.basic_blocks:
+        block_count = len(self.program.basic_blocks)
+        block_inputs: list[Definitions] = [{} for _ in range(block_count)]
+        block_writers: list[LocalWriters] = [{} for _ in range(block_count)]
+        self.program.block_inputs = block_inputs
+        self.program.block_writers = block_writers
+        if not block_count:
             return
 
-        block_inputs: list[Definitions] = [{} for _ in self.program.basic_blocks]
+        self._intern: Interner[frozenset[OpIndex]] = Interner()
 
         # Initialize
+        entry = self._intern(frozenset({EntryIndex}))
         for index in range(len(self.program.operations)):
             if not self.program.reachable(index):
                 continue
             for var in self.program.iter_inputs(index):
                 if var.kind == VarKinds.Register:
                     for byte in split(var):
-                        block_inputs[0][byte] = {EntryIndex}
+                        block_inputs[0][byte] = entry
 
-        # Block effects are computed once, on demand, as (generated defs, killed variables)
-        effects: dict[BlockIndex, tuple[Definitions, set[Var]]] = {}
+        # Block effects: last writer of each byte written in the block
+        for block_index, block in enumerate(self.program.basic_blocks):
+            if block.reachable:
+                block_writers[block_index] = self._collect_writers(block)
+        shared_temporaries = self._collect_shared_temporaries()
+        generated_by_block: list[Definitions] = [
+            {
+                byte: self._intern(frozenset((byte_writers[-1],)))
+                for byte, byte_writers in writers.items()
+                if byte.kind != VarKinds.Unique or byte in shared_temporaries
+            }
+            for writers in block_writers
+        ]
 
         # Each reachable block is processed at least once, lowest index first:
         # follows the code layout, close to a reverse post-order.
@@ -49,13 +70,7 @@ class ReachingDefBuilder(PassBase):
             block_index = heapq.heappop(pending)
             queued.remove(block_index)
 
-            if block_index not in effects:
-                effects[block_index] = self._compute_effect(
-                    self.program.basic_blocks[block_index]
-                )
-            generated, killed = effects[block_index]
-            outputs = self._apply_effect(block_inputs[block_index], generated, killed)
-
+            outputs = block_inputs[block_index] | generated_by_block[block_index]
             for successor in self.program.basic_blocks[block_index].succ_blocks:
                 if successor < 0:
                     continue
@@ -64,53 +79,44 @@ class ReachingDefBuilder(PassBase):
                     heapq.heappush(pending, successor)
                     queued.add(successor)
 
-        for block, inputs in zip(self.program.basic_blocks, block_inputs):
-            if block.reachable:
-                self._expand_block(block, inputs)
+        del self._intern
 
-    def _compute_effect(self, block: BasicBlock) -> tuple[Definitions, set[Var]]:
-        generated: Definitions = {}
-        killed: set[Var] = set()
+    def _collect_writers(self, block: BasicBlock) -> LocalWriters:
+        writers: LocalWriters = {}
         for index in block.op_indexes:
-            op = self.program.operations[index]
-            if op.output:
-                written = {index}
-                for byte in split(wrap(op.output)):
-                    generated[byte] = written
-                    killed.add(byte)
-        return generated, killed
+            output = self.program.operations[index].output
+            if output:
+                for byte in split(wrap(output)):
+                    writers.setdefault(byte, []).append(index)
+        return writers
 
-    @staticmethod
-    def _apply_effect(
-        inputs: Definitions, generated: Definitions, killed: set[Var]
-    ) -> Definitions:
-        # Sets are never modified in place, so they can be shared
-        outputs = dict(generated)
-        for var, defs in inputs.items():
-            if var in killed:
+    def _collect_shared_temporaries(self) -> set[Var]:
+        """Returns P-Code temporary bytes read in a block before being written in it."""
+
+        shared: set[Var] = set()
+        for block, writers in zip(self.program.basic_blocks, self.program.block_writers):
+            if not block.reachable:
                 continue
-            outputs[var] = outputs[var] | defs if var in outputs else defs
-        return outputs
+            for index in block.op_indexes:
+                for var in self.program.iter_inputs(index):
+                    if var.kind != VarKinds.Unique:
+                        continue
+                    for byte in split(var):
+                        byte_writers = writers.get(byte)
+                        if not byte_writers or byte_writers[0] >= index:
+                            shared.add(byte)
+        return shared
 
-    def _expand_block(self, block: BasicBlock, inputs: Definitions):
-        """Computes the definitions reaching each operation of the block."""
-
-        current = inputs
-        for index in block.op_indexes:
-            self.program.reaching_defs[index] = current
-            current = apply_operation(current, index, self.program.operations[index])
-
-    @staticmethod
-    def _merge_definitions(target: Definitions, source: Definitions) -> bool:
+    def _merge_definitions(self, target: Definitions, source: Definitions) -> bool:
         """Adds source definitions to target ones, returns True if target changed."""
 
         changed = False
         for var, defs in source.items():
             target_defs = target.get(var)
             if target_defs is None:
-                target[var] = set(defs)
+                target[var] = defs
                 changed = True
-            elif not defs <= target_defs:
-                target_defs |= defs
+            elif target_defs is not defs and not defs <= target_defs:
+                target[var] = self._intern(target_defs | defs)
                 changed = True
         return changed

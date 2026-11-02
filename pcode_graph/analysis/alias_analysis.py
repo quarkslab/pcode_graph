@@ -15,6 +15,7 @@ import heapq
 
 from pypcode import OpCode, PcodeOp
 
+from pcode_graph.analysis.interning import Interner
 from pcode_graph.analysis.pass_base import PassBase
 from pcode_graph.arch import Arch
 from pcode_graph.analysis.program import (
@@ -71,42 +72,60 @@ class MemoryAccess:
         ]
 
 
-@dataclass(frozen=True, slots=True)
+DefinitionSet = frozenset[OpIndex]
+
+
+@dataclass(slots=True)
 class MemoryState:
+    """Definitions of memory bytes, updated in place."""
+
     # Definitions of tracked bytes
-    tracked: dict[MemoryByte, frozenset[OpIndex]]
+    tracked: dict[MemoryByte, DefinitionSet]
 
     # Definitions of untracked bytes
-    default: frozenset[OpIndex]
+    default: DefinitionSet
 
-    def read(self, access: MemoryAccess) -> frozenset[OpIndex]:
+    def copy(self) -> "MemoryState":
+        return MemoryState(dict(self.tracked), self.default)
+
+    def read(self, access: MemoryAccess) -> DefinitionSet:
         return frozenset().union(
             *(self.tracked.get(byte, self.default) for byte in access.bytes)
         )
 
-    def write(self, access: MemoryAccess, index: OpIndex) -> "MemoryState":
-        written = frozenset({index})
-        tracked = dict(self.tracked)
+    def write(self, access: MemoryAccess, written: DefinitionSet) -> None:
         for byte in access.bytes:
-            tracked[byte] = written
-        return MemoryState(tracked, self.default)
+            self.tracked[byte] = written
 
-    def clobber(self) -> "MemoryState":
+    def clobber(self, intern: Interner[DefinitionSet]) -> None:
         unknown = {UnknownWriteIndex}
-        return MemoryState(
-            {byte: defs | unknown for byte, defs in self.tracked.items()},
-            self.default | unknown,
-        )
+        for byte, defs in self.tracked.items():
+            self.tracked[byte] = intern(defs | unknown)
+        self.default = intern(self.default | unknown)
 
-    def merge(self, other: "MemoryState") -> "MemoryState":
-        return MemoryState(
-            {
-                byte: self.tracked.get(byte, self.default)
-                | other.tracked.get(byte, other.default)
-                for byte in self.tracked.keys() | other.tracked.keys()
-            },
-            self.default | other.default,
-        )
+    def merge(self, other: "MemoryState", intern: Interner[DefinitionSet]) -> bool:
+        """Adds the definitions of the other state, returns True if this state changed."""
+
+        default_grows = not other.default <= self.default
+        changed = default_grows
+        for byte, theirs in other.tracked.items():
+            mine = self.tracked.get(byte)
+            if mine is None:
+                if not theirs <= self.default:
+                    changed = True
+                elif not default_grows:
+                    continue
+                self.tracked[byte] = intern(self.default | theirs)
+            elif mine is not theirs and not theirs <= mine:
+                self.tracked[byte] = intern(mine | theirs)
+                changed = True
+        for byte, mine in self.tracked.items():
+            if byte not in other.tracked and not other.default <= mine:
+                self.tracked[byte] = intern(mine | other.default)
+                changed = True
+        if default_grows:
+            self.default = intern(self.default | other.default)
+        return changed
 
 
 ADDRESS_OPCODES = {OpCode.COPY, OpCode.INT_ADD, OpCode.INT_SUB, OpCode.INT_OR}
@@ -122,6 +141,7 @@ class MemoryAnalyzer(PassBase):
         self._output_values: dict[OpIndex, AbstractValue] = {}
         self._loads: dict[OpIndex, MemoryAccess] = {}
         self._stores: dict[OpIndex, MemoryAccess | None] = {}
+        self._intern: Interner[DefinitionSet] = Interner()
 
     @property
     def result(self) -> Memory:
@@ -145,7 +165,7 @@ class MemoryAnalyzer(PassBase):
                 self._stores[index] = self._compute_access(index, op.inputs[2].size)
 
         self._collect_load_defs(self._compute_reads())
-        
+        del self._intern
 
     def value_of(self, index: OpIndex, var: Var) -> AbstractValue:
         """Evaluates the given variable when read by the given operation."""
@@ -211,52 +231,57 @@ class MemoryAnalyzer(PassBase):
                 return MemoryAccess(False, absolute, size)
         return None
 
-    def _apply(self, index: OpIndex, state: MemoryState) -> MemoryState:
-        """Returns the memory state after the given operation."""
+    def _apply(self, index: OpIndex, state: MemoryState) -> None:
+        """Updates the memory state with the effect of the given operation."""
 
         op = self.program.operations[index]
         if op.opcode == OpCode.STORE:
             access = self._stores[index]
-            return state.clobber() if access is None else state.write(access, index)
-        if op.opcode in CALL_OPCODES and UnknownCodeIndex in self.program.succ_ops(
+            if access is None:
+                state.clobber(self._intern)
+            else:
+                state.write(access, self._intern(frozenset({index})))
+        elif op.opcode in CALL_OPCODES and UnknownCodeIndex in self.program.succ_ops(
             index
         ):
-            return state.clobber()
-        return state
+            state.clobber(self._intern)
 
-    def _compute_reads(self) -> dict[OpIndex, frozenset[OpIndex]]:
+    def _compute_reads(self) -> dict[OpIndex, DefinitionSet]:
         """Computes the definitions of the bytes read by each resolved load."""
 
         blocks = self.program.basic_blocks
         block_inputs: list[MemoryState | None] = [None] * len(blocks)
-        block_inputs[0] = MemoryState({}, frozenset({EntryIndex}))
-        reads: dict[OpIndex, frozenset[OpIndex]] = {}
+        block_inputs[0] = MemoryState({}, self._intern(frozenset({EntryIndex})))
+        reads: dict[OpIndex, DefinitionSet] = {}
         pending = [0]
         queued = {0}
 
         while pending:
             block_index = heapq.heappop(pending)
             queued.remove(block_index)
-            state = block_inputs[block_index]
-            assert state is not None
+            block_input = block_inputs[block_index]
+            assert block_input is not None
+            state = block_input.copy()
             for index in blocks[block_index].op_indexes:
                 if index in self._loads:
-                    reads[index] = state.read(self._loads[index])
-                state = self._apply(index, state)
+                    reads[index] = self._intern(state.read(self._loads[index]))
+                self._apply(index, state)
 
             for successor in blocks[block_index].succ_blocks:
                 if successor < 0:
                     continue
                 previous = block_inputs[successor]
-                merged = state if previous is None else previous.merge(state)
-                if merged != previous:
-                    block_inputs[successor] = merged
-                    if successor not in queued:
-                        heapq.heappush(pending, successor)
-                        queued.add(successor)
+                if previous is None:
+                    block_inputs[successor] = state.copy()
+                    changed = True
+                else:
+                    changed = previous.merge(state, self._intern)
+                if changed and successor not in queued:
+                    heapq.heappush(pending, successor)
+                    queued.add(successor)
         return reads
 
-    def _collect_load_defs(self, reads: dict[OpIndex, frozenset[OpIndex]]) -> None:
+    def _collect_load_defs(self, reads: dict[OpIndex, DefinitionSet]) -> None:
         for index, definitions in reads.items():
             if UnknownWriteIndex in definitions:
                 continue

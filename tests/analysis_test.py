@@ -203,7 +203,7 @@ ldr x2, [sp, #0x10]
     ]
     assert all(
         var.kind in {VarKinds.Register, VarKinds.Unique}
-        for var in prg.definitions_at(6)
+        for var in prg.get_reaching_defs(6)
     )
     assert 3 not in set().union(*prg.get_exit_defs().values())
 

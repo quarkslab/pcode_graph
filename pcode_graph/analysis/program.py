@@ -147,7 +147,7 @@ class Program:
     # Reaching definitions at the entry of each block. By variable byte, set of:
     #   - definitions (= writing operation index) that reach the block,
     #   - or EntryIndex (for initial definitions of inputs).
-    # P-Code temporaries are only kept if read by another block.
+    # P-Code temporaries are only kept if read in a block before being written in it.
     # Definitions inside a block are derived on demand from block_writers,
     # which avoids storing a full copy of the definitions for each operation.
     # Both are empty for unreachable blocks.
@@ -238,8 +238,11 @@ class Program:
             defs.update(inputs.get(byte, ()))
         return defs
 
-    def definitions_at(self, index: OpIndex) -> Definitions:
-        """Returns all the definitions reaching the given operation."""
+    def get_reaching_defs(self, index: OpIndex) -> Definitions:
+        """Returns all the definitions reaching the given operation.
+        P-Code temporaries written in other blocks are omitted if not read before being
+        written in this block.
+        """
 
         return self._definitions_before(self.block_indexes[index], index)
 

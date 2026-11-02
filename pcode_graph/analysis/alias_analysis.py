@@ -77,7 +77,11 @@ DefinitionSet = frozenset[OpIndex]
 
 @dataclass(slots=True)
 class MemoryState:
-    """Definitions of memory bytes, updated in place."""
+    """Definitions of memory bytes, updated in place.
+
+    A state must not be shared between blocks: copy it before updating it.
+    Definition sets are immutable and interned, so they can be shared.
+    """
 
     # Definitions of tracked bytes
     tracked: dict[MemoryByte, DefinitionSet]
@@ -93,7 +97,10 @@ class MemoryState:
             *(self.tracked.get(byte, self.default) for byte in access.bytes)
         )
 
-    def write(self, access: MemoryAccess, written: DefinitionSet) -> None:
+    def write(
+        self, access: MemoryAccess, index: OpIndex, intern: Interner[DefinitionSet]
+    ) -> None:
+        written = intern(frozenset({index}))
         for byte in access.bytes:
             self.tracked[byte] = written
 
@@ -104,7 +111,9 @@ class MemoryState:
         self.default = intern(self.default | unknown)
 
     def merge(self, other: "MemoryState", intern: Interner[DefinitionSet]) -> bool:
-        """Adds the definitions of the other state, returns True if this state changed."""
+        """Adds the definitions of the other state, left unchanged.
+        Returns True if this state changed.
+        """
 
         default_grows = not other.default <= self.default
         changed = default_grows
@@ -141,7 +150,6 @@ class MemoryAnalyzer(PassBase):
         self._output_values: dict[OpIndex, AbstractValue] = {}
         self._loads: dict[OpIndex, MemoryAccess] = {}
         self._stores: dict[OpIndex, MemoryAccess | None] = {}
-        self._intern: Interner[DefinitionSet] = Interner()
 
     @property
     def result(self) -> Memory:
@@ -165,7 +173,6 @@ class MemoryAnalyzer(PassBase):
                 self._stores[index] = self._compute_access(index, op.inputs[2].size)
 
         self._collect_load_defs(self._compute_reads())
-        del self._intern
 
     def value_of(self, index: OpIndex, var: Var) -> AbstractValue:
         """Evaluates the given variable when read by the given operation."""
@@ -231,27 +238,30 @@ class MemoryAnalyzer(PassBase):
                 return MemoryAccess(False, absolute, size)
         return None
 
-    def _apply(self, index: OpIndex, state: MemoryState) -> None:
+    def _apply(
+        self, index: OpIndex, state: MemoryState, intern: Interner[DefinitionSet]
+    ) -> None:
         """Updates the memory state with the effect of the given operation."""
 
         op = self.program.operations[index]
         if op.opcode == OpCode.STORE:
             access = self._stores[index]
             if access is None:
-                state.clobber(self._intern)
+                state.clobber(intern)
             else:
-                state.write(access, self._intern(frozenset({index})))
+                state.write(access, index, intern)
         elif op.opcode in CALL_OPCODES and UnknownCodeIndex in self.program.succ_ops(
             index
         ):
-            state.clobber(self._intern)
+            state.clobber(intern)
 
     def _compute_reads(self) -> dict[OpIndex, DefinitionSet]:
         """Computes the definitions of the bytes read by each resolved load."""
 
         blocks = self.program.basic_blocks
+        intern: Interner[DefinitionSet] = Interner()
         block_inputs: list[MemoryState | None] = [None] * len(blocks)
-        block_inputs[0] = MemoryState({}, self._intern(frozenset({EntryIndex})))
+        block_inputs[0] = MemoryState({}, intern(frozenset({EntryIndex})))
         reads: dict[OpIndex, DefinitionSet] = {}
         pending = [0]
         queued = {0}
@@ -264,8 +274,8 @@ class MemoryAnalyzer(PassBase):
             state = block_input.copy()
             for index in blocks[block_index].op_indexes:
                 if index in self._loads:
-                    reads[index] = self._intern(state.read(self._loads[index]))
-                self._apply(index, state)
+                    reads[index] = intern(state.read(self._loads[index]))
+                self._apply(index, state, intern)
 
             for successor in blocks[block_index].succ_blocks:
                 if successor < 0:
@@ -275,7 +285,7 @@ class MemoryAnalyzer(PassBase):
                     block_inputs[successor] = state.copy()
                     changed = True
                 else:
-                    changed = previous.merge(state, self._intern)
+                    changed = previous.merge(state, intern)
                 if changed and successor not in queued:
                     heapq.heappush(pending, successor)
                     queued.add(successor)

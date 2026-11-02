@@ -14,14 +14,17 @@ from .program import (
     split,
 )
 
+DefinitionInterner = Interner[frozenset[OpIndex]]
+
 
 class ReachingDefBuilder(PassBase):
     """Computes reaching definitions at the entry of each block.
 
-    Identical definition sets are shared (interned) to bound memory on large functions.
+    Identical definition sets are shared (interned) to reduce the memory retained by
+    the results on large functions.
     """
 
-    def __call__(self):
+    def __call__(self) -> None:
         block_count = len(self.program.basic_blocks)
         block_inputs: list[Definitions] = [{} for _ in range(block_count)]
         block_writers: list[LocalWriters] = [{} for _ in range(block_count)]
@@ -30,26 +33,30 @@ class ReachingDefBuilder(PassBase):
         if not block_count:
             return
 
-        self._intern: Interner[frozenset[OpIndex]] = Interner()
-
-        # Initialize
-        entry = self._intern(frozenset({EntryIndex}))
-        for index in range(len(self.program.operations)):
-            if not self.program.reachable(index):
+        intern: DefinitionInterner = Interner()
+        entry = intern(frozenset({EntryIndex}))
+        shared_temporaries: set[Var] = set()
+        for block_index, block in enumerate(self.program.basic_blocks):
+            if not block.reachable:
                 continue
-            for var in self.program.iter_inputs(index):
-                if var.kind == VarKinds.Register:
-                    for byte in split(var):
-                        block_inputs[0][byte] = entry
+            writers = self._collect_writers(block)
+            block_writers[block_index] = writers
+            for index in block.op_indexes:
+                for var in self.program.iter_inputs(index):
+                    if var.kind == VarKinds.Register:
+                        for byte in split(var):
+                            block_inputs[0][byte] = entry
+                    elif var.kind == VarKinds.Unique:
+                        # Temporary bytes read in a block before being written in it
+                        for byte in split(var):
+                            byte_writers = writers.get(byte)
+                            if not byte_writers or byte_writers[0] >= index:
+                                shared_temporaries.add(byte)
 
         # Block effects: last writer of each byte written in the block
-        for block_index, block in enumerate(self.program.basic_blocks):
-            if block.reachable:
-                block_writers[block_index] = self._collect_writers(block)
-        shared_temporaries = self._collect_shared_temporaries()
         generated_by_block: list[Definitions] = [
             {
-                byte: self._intern(frozenset((byte_writers[-1],)))
+                byte: intern(frozenset((byte_writers[-1],)))
                 for byte, byte_writers in writers.items()
                 if byte.kind != VarKinds.Unique or byte in shared_temporaries
             }
@@ -74,12 +81,12 @@ class ReachingDefBuilder(PassBase):
             for successor in self.program.basic_blocks[block_index].succ_blocks:
                 if successor < 0:
                     continue
-                changed = self._merge_definitions(block_inputs[successor], outputs)
+                changed = self._merge_definitions(
+                    block_inputs[successor], outputs, intern
+                )
                 if changed and successor not in queued:
                     heapq.heappush(pending, successor)
                     queued.add(successor)
-
-        del self._intern
 
     def _collect_writers(self, block: BasicBlock) -> LocalWriters:
         writers: LocalWriters = {}
@@ -90,24 +97,10 @@ class ReachingDefBuilder(PassBase):
                     writers.setdefault(byte, []).append(index)
         return writers
 
-    def _collect_shared_temporaries(self) -> set[Var]:
-        """Returns P-Code temporary bytes read in a block before being written in it."""
-
-        shared: set[Var] = set()
-        for block, writers in zip(self.program.basic_blocks, self.program.block_writers):
-            if not block.reachable:
-                continue
-            for index in block.op_indexes:
-                for var in self.program.iter_inputs(index):
-                    if var.kind != VarKinds.Unique:
-                        continue
-                    for byte in split(var):
-                        byte_writers = writers.get(byte)
-                        if not byte_writers or byte_writers[0] >= index:
-                            shared.add(byte)
-        return shared
-
-    def _merge_definitions(self, target: Definitions, source: Definitions) -> bool:
+    @staticmethod
+    def _merge_definitions(
+        target: Definitions, source: Definitions, intern: DefinitionInterner
+    ) -> bool:
         """Adds source definitions to target ones, returns True if target changed."""
 
         changed = False
@@ -117,6 +110,6 @@ class ReachingDefBuilder(PassBase):
                 target[var] = defs
                 changed = True
             elif target_defs is not defs and not defs <= target_defs:
-                target[var] = self._intern(target_defs | defs)
+                target[var] = intern(target_defs | defs)
                 changed = True
         return changed

@@ -1,10 +1,8 @@
 from enum import IntFlag, auto
-from typing import NamedTuple
-import networkx as nx
-
-
+from typing import Callable, NamedTuple
+import igraph
 from pcode_graph.nx_exporter import export_to_networkx
-from pcode_graph.graph import CDG, EdgeKinds, NodeKinds
+from pcode_graph.graph import CDG, Edge, EdgeKinds, NodeKinds
 from pcode_graph.pcode import OpCodes
 
 
@@ -29,51 +27,38 @@ def count_edges(cdg: CDG) -> GraphCharacteristics:
     return GraphCharacteristics(data_only, len(cdg.edges) - data_only, len(cdg.edges))
 
 
-def get_graph_diameters(cdg: CDG) -> GraphCharacteristics:
-    """Computes the diameter of the given graph."""
+def get_graph_diameter(
+    cdg: CDG,
+    edge_filter: Callable[[Edge], bool] = lambda e: True,
+) -> int:
+    """Computes the undirected diameter of the given graph."""
 
-    n = len(cdg.nodes)
+    undirected = igraph.Graph(
+        n=len(cdg.nodes),
+        edges=[
+            (edge.source_node, edge.destination_node)
+            for edge in cdg.edges
+            if edge_filter(edge)
+        ],
+        directed=True,
+    )
+    undirected.simplify()    
+    return undirected.diameter(directed=True, unconn=True)
 
-    def build_adjacency(edges):
-        adj = [[] for _ in range(n)]
-        for e in edges:
-            adj[e.source_node].append(e.destination_node)
-        return adj
 
-    data_edges = []
-    ctrl_edges = []
-    for e in cdg.edges:
-        if e.kind == EdgeKinds.Data:
-            data_edges.append(e)
-        else:
-            ctrl_edges.append(e)
-
-    def diameter(adjacency) -> int:
-        # Compute graph diameter with BFS
-        d = 0
-        for src in range(n):
-            dist = [-1] * n
-            dist[src] = 0
-            front = deque((src,))
-            while front:
-                current = front.popleft()
-                for neigbor in adjacency[current]:
-                    if dist[neigbor] == -1:
-                        dist[neigbor] = dist[current] + 1
-                        front.append(neigbor)
-            d = max(d, max(dist))
-        return d
-
+def get_graph_diameters(
+    cdg: CDG,
+) -> GraphCharacteristics:
     return GraphCharacteristics(
-        diameter(build_adjacency(data_edges)),
-        diameter(build_adjacency(ctrl_edges)),
-        diameter(build_adjacency(chain(data_edges, ctrl_edges))),
+        data_only=get_graph_diameter(cdg, lambda e: e.kind == EdgeKinds.Data),
+        control_only=get_graph_diameter(cdg, lambda e: e.kind != EdgeKinds.Data),
+        both=get_graph_diameter(cdg),
     )
 
 
 class FunctionCharacteristics(IntFlag):
     """Helps evaluating the level of difficulty of a function,
-    regarding miscalleneous ML tasks."""
+    regarding miscellaneous ML tasks."""
 
     data = auto()
     condition = auto()
@@ -83,18 +68,25 @@ class FunctionCharacteristics(IntFlag):
     loop = auto()
 
 
+def has_loops(cdg: CDG) -> bool:
+    """Returns True if the given graph has loops."""
+    edges = []
+    for edge in cdg.edges:
+        if edge.kind == EdgeKinds.Control:
+            edges.append((edge.source_node, edge.destination_node))
+        elif edge.kind == EdgeKinds.BasicBlockMembership:
+            # Reverse membership to create cycles
+            edges.append((edge.destination_node, edge.source_node))
+    return not igraph.Graph(n=len(cdg.nodes), edges=edges, directed=True).is_dag()
+
+
 def get_function_characteristics(graph: CDG) -> FunctionCharacteristics:
     """Characterizes a function regarding control flow features."""
 
     # Every function contains data-flow easiest level
     function_characteristics = FunctionCharacteristics.data
 
-    ng = export_to_networkx(graph, False)
-    try:
-        nx.find_cycle(ng)
-    except nx.NetworkXNoCycle:
-        pass
-    else:
+    if has_loops(graph):
         function_characteristics |= FunctionCharacteristics.loop
 
     for n in graph.nodes:

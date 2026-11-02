@@ -42,7 +42,6 @@ def get_graph_diameter(
         ],
         directed=True,
     )
-    undirected.simplify()    
     return undirected.diameter(directed=True, unconn=True)
 
 

@@ -148,6 +148,8 @@ class MemoryAnalyzer(PassBase):
 
         self.stack_pointer = STACK_POINTERS.get(program.arch)
         self._output_values: dict[OpIndex, AbstractValue] = {}
+        # Unevaluated definitions met by _evaluate_from
+        self._missing: list[OpIndex] | None = None
         self._loads: dict[OpIndex, MemoryAccess] = {}
         self._stores: dict[OpIndex, MemoryAccess | None] = {}
 
@@ -163,7 +165,6 @@ class MemoryAnalyzer(PassBase):
             if not self.program.reachable(index):
                 continue
             if op.output is not None:
-                # Evaluating in program order bounds the recursion depth
                 self._output_value(index, wrap(op.output))
                 if op.opcode == OpCode.LOAD:
                     access = self._compute_access(index, op.output.size)
@@ -198,10 +199,31 @@ class MemoryAnalyzer(PassBase):
         if op.output is None or wrap(op.output) != var:
             return None
         if index not in self._output_values:
+            if op.opcode not in ADDRESS_OPCODES:
+                self._output_values[index] = None
+            elif self._missing is None:
+                self._evaluate_from(index)
+            else:
+                # Evaluated later by _evaluate_from
+                self._missing.append(index)
+        return self._output_values.get(index)
+
+    def _evaluate_from(self, root: OpIndex) -> None:
+        """Evaluates the given operation after its dependencies, without recursion."""
+
+        pending = [root]
+        while pending:
+            index = pending[-1]
             # Breaks cycles in loops
-            self._output_values[index] = None
-            self._output_values[index] = self._evaluate(index, op)
-        return self._output_values[index]
+            self._output_values.setdefault(index, None)
+            self._missing = []
+            value = self._evaluate(index, self.program.operations[index])
+            if self._missing:
+                pending += self._missing
+            else:
+                self._output_values[index] = value
+                pending.pop()
+        self._missing = None
 
     def _evaluate(self, index: OpIndex, op: PcodeOp) -> AbstractValue:
         if op.opcode not in ADDRESS_OPCODES:

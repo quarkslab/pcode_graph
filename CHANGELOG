@@ -1,3 +1,7 @@
+# 4.2.1
+
+- Fix recursion error in memory analysis.
+
 # 4.2.0
 
 - Optimize memory consumption and speed of analyses.

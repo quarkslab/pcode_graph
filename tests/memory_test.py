@@ -270,6 +270,21 @@ def test_long_stack_pointer_chain(outdir: Path, x86_64: ArchContext, log):
     assert len(program.memory.forwarded_loads) == 1
 
 
+def test_long_chain_defined_after_use(outdir: Path, x86_64: ArchContext, log):
+    # The load precedes the stack pointer definitions in program order
+    program = make_program_from_asm(
+        "jmp body; use: mov rbx, [rsp]; ret; body: mov [rsp], rax;"
+        + "add rsp, 8;" * 2000
+        + "sub rsp, 16000; jmp use",
+        x86_64,
+        outdir,
+    )
+
+    # Both the mov and the ret read the single store
+    assert len(set(map(tuple, program.memory.forwarded_loads.values()))) == 1
+    assert len(program.memory.forwarded_loads) == 2
+
+
 @pytest.mark.parametrize(
     "arch_fixture", ["x86_64", "x86_32", "arm64", "arm32", "mips_64", "mips_32"]
 )
